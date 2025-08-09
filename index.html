@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Schedule Converter → Google Calendar (ICS/CSV)</title>
+  <!-- Tailwind (CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- SheetJS (Excel parser) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .log { white-space: pre-wrap; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body class="bg-gradient-to-b from-gray-50 to-white min-h-screen text-gray-900">
+  <div class="max-w-4xl mx-auto px-4 py-10">
+    <header class="mb-8">
+      <h1 class="text-3xl md:text-4xl font-semibold tracking-tight">Schedule Converter</h1>
+      <p class="text-gray-600 mt-2">
+        Upload your Workday/SSC <span class="mono">.xlsx</span> and download Google Calendar
+        <span class="inline-block rounded-full px-2 py-0.5 text-xs font-semibold bg-gray-100 text-gray-700">ICS</span>
+        & <span class="inline-block rounded-full px-2 py-0.5 text-xs font-semibold bg-gray-100 text-gray-700">CSV</span>.
+        Everything runs locally in your browser.
+      </p>
+    </header>
+
+    <main class="bg-white rounded-3xl shadow-md border border-gray-100 p-6 md:p-8">
+      <div class="grid gap-6">
+        <div class="grid md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium mb-2">Select your Excel file (.xlsx)</label>
+            <input id="fileInput" type="file" accept=".xlsx,.xls"
+              class="block w-full text-sm text-gray-900 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-medium file:bg-black file:text-white hover:file:bg-gray-800" />
+            <p class="text-xs text-gray-500 mt-2">Supports the Workday “View My Courses/Schedule” export, and similar formats.</p>
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-2">Time zone (DST-aware)</label>
+            <select id="tzSelect" class="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm">
+              <option value="America/Vancouver" selected>America/Vancouver (default)</option>
+              <option value="America/Los_Angeles">America/Los_Angeles</option>
+              <option value="America/Toronto">America/Toronto</option>
+              <option value="America/New_York">America/New_York</option>
+              <option value="Europe/London">Europe/London</option>
+              <option value="Europe/Berlin">Europe/Berlin</option>
+              <option value="Asia/Bangkok">Asia/Bangkok</option>
+              <option value="UTC">UTC</option>
+              <option value="__custom__">Custom (IANA)</option>
+            </select>
+            <input id="tzCustom" type="text" placeholder="e.g., Europe/Paris"
+              class="w-full mt-2 rounded-xl border border-gray-200 px-3 py-2 text-sm hidden" />
+            <p class="text-xs text-gray-500 mt-1">ICS uses <span class="mono">TZID</span> so Google honors daylight saving time automatically. CSV shows local times per this zone.</p>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap gap-3 items-center">
+          <button id="processBtn"
+            class="inline-flex items-center justify-center rounded-2xl px-4 py-2 font-medium shadow-sm border border-gray-200 bg-black text-white hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled>Process</button>
+          <button id="resetBtn"
+            class="inline-flex items-center justify-center rounded-2xl px-4 py-2 font-medium shadow-sm border border-gray-200 bg-white text-gray-900 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled>Reset</button>
+          <details class="ml-auto">
+            <summary class="text-sm text-gray-600 cursor-pointer">Dev / Tests</summary>
+            <div class="mt-3 flex flex-wrap gap-3">
+              <button id="runTestsBtn" class="inline-flex items-center justify-center rounded-2xl px-3 py-1.5 text-sm font-medium shadow-sm border border-gray-200 bg-white hover:bg-gray-50">Run self-tests</button>
+              <button id="demoBtn" class="inline-flex items-center justify-center rounded-2xl px-3 py-1.5 text-sm font-medium shadow-sm border border-gray-200 bg-white hover:bg-gray-50">Load demo rows (no file)</button>
+            </div>
+          </details>
+        </div>
+
+        <!-- Column mapping UI (appears only if auto-detection fails) -->
+        <section id="mappingSection" class="hidden border rounded-2xl p-4">
+          <h3 class="font-semibold mb-2">Map columns (we couldn’t auto-detect reliably)</h3>
+          <p class="text-sm text-gray-600 mb-4">Pick which columns correspond to each field. Options show header text (if any) and a sample cell from the first data row.</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium mb-1">Meeting column (date ranges)</label>
+              <select id="mapMeeting" class="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm"></select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-1">Title / Course</label>
+              <select id="mapCourse" class="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm"></select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-1">Section</label>
+              <select id="mapSection" class="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm"></select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-1">Component (Lecture/Lab/etc.)</label>
+              <select id="mapComponent" class="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm"></select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-1">Instructor</label>
+              <select id="mapInstructor" class="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm"></select>
+            </div>
+          </div>
+          <div class="mt-4 flex gap-3">
+            <button id="mappingApply" class="inline-flex items-center justify-center rounded-2xl px-4 py-2 font-medium shadow-sm border border-gray-200 bg-black text-white hover:bg-gray-800">Use these columns</button>
+            <button id="mappingCancel" class="inline-flex items-center justify-center rounded-2xl px-4 py-2 font-medium shadow-sm border border-gray-200 bg-white text-gray-900 hover:bg-gray-50">Cancel</button>
+          </div>
+        </section>
+
+        <div id="downloads" class="hidden border-t pt-6 mt-2">
+          <h2 class="text-lg font-semibold mb-3">Downloads</h2>
+          <div class="flex flex-wrap gap-3">
+            <a id="dlIcs" class="inline-flex items-center justify-center rounded-2xl px-4 py-2 font-medium shadow-sm border border-gray-200 bg-black text-white hover:bg-gray-800" download="schedule.ics">Download ICS</a>
+            <a id="dlCsv" class="inline-flex items-center justify-center rounded-2xl px-4 py-2 font-medium shadow-sm border border-gray-200 bg-white text-gray-900 hover:bg-gray-50" download="schedule.csv">Download CSV</a>
+          </div>
+          <p class="text-xs text-gray-500 mt-3">ICS uses <span class="mono">TZID</span> (DST aware). CSV has local times; import into a calendar using the same time zone.</p>
+        </div>
+
+        <div class="bg-gray-50 rounded-2xl p-4 border border-gray-200">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-semibold">Status</h3>
+            <span class="inline-block rounded-full px-3 py-1 text-xs font-semibold bg-gray-100 text-gray-700" id="badge">Idle</span>
+          </div>
+          <div id="log" class="log text-sm text-gray-700 mt-3"></div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="mt-8 text-xs text-gray-500">
+      <p>Description includes <em>Component</em> + <em>Instructor</em>. Location uses building / floor / room / campus when present. Major/class agnostic.</p>
+    </footer>
+  </div>
+
+  <script>
+    // ===== DOM =====
+    const $ = sel => document.querySelector(sel);
+    const fileInput = $('#fileInput');
+    const processBtn = $('#processBtn');
+    const resetBtn = $('#resetBtn');
+    const runTestsBtn = $('#runTestsBtn');
+    const demoBtn = $('#demoBtn');
+    const downloads = $('#downloads');
+    const dlIcs = $('#dlIcs');
+    const dlCsv = $('#dlCsv');
+    const logEl = $('#log');
+    const badge = $('#badge');
+    const tzSelect = $('#tzSelect');
+    const tzCustom = $('#tzCustom');
+    const mappingSection = $('#mappingSection');
+    const mapMeeting = $('#mapMeeting');
+    const mapCourse = $('#mapCourse');
+    const mapSection = $('#mapSection');
+    const mapComponent = $('#mapComponent');
+    const mapInstructor = $('#mapInstructor');
+    const mappingApply = $('#mappingApply');
+    const mappingCancel = $('#mappingCancel');
+
+    let _lastRows = null; // for mapping UI
+
+    // ===== Terms (clamp if overlapping; else keep original range) =====
+    const TERM1_START = ymdToUTCDate('2025-09-02');
+    const TERM1_END   = ymdToUTCDate('2025-12-05');
+    const TERM2_START = ymdToUTCDate('2026-01-05');
+    const TERM2_END   = ymdToUTCDate('2026-04-10');
+
+    // ===== Helpers =====
+    function setStatus(text, state='Idle'){ logEl.textContent += text + '\n'; badge.textContent = state; }
+    function cleanStr(v){ return (v==null? '' : String(v)).trim(); }
+    function cap(s){ return s? (s.charAt(0).toUpperCase()+s.slice(1).toLowerCase()) : s; }
+    function ymdToUTCDate(ymd){ const [Y,M,D] = ymd.split('-').map(Number); return new Date(Date.UTC(Y, M-1, D)); }
+    function pad(n){ return (n<10? '0'+n : ''+n); }
+
+    // UUID polyfill
+    if (!('crypto' in window) || !('randomUUID' in crypto)) {
+      window.crypto = window.crypto || {};
+      crypto.randomUUID = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = Math.random()*16|0, v = c==='x'? r : (r&0x3|0x8); return v.toString(16);
+      });
+    }
+
+    tzSelect.addEventListener('change', () => {
+      tzCustom.classList.toggle('hidden', tzSelect.value !== '__custom__');
+    });
+
+    fileInput.addEventListener('change', () => {
+      processBtn.disabled = !fileInput.files?.length;
+      resetBtn.disabled = !fileInput.files?.length;
+      downloads.classList.add('hidden');
+      logEl.textContent = '';
+      setStatus('File selected: ' + (fileInput.files?.[0]?.name || ''));
+    });
+
+    resetBtn.addEventListener('click', () => {
+      fileInput.value = '';
+      processBtn.disabled = true;
+      resetBtn.disabled = true;
+      downloads.classList.add('hidden');
+      logEl.textContent = '';
+      mappingSection.classList.add('hidden');
+      _lastRows = null;
+      setStatus('Reset.', 'Idle');
+    });
+
+    processBtn.addEventListener('click', async () => {
+      if (!fileInput.files?.length) return;
+      downloads.classList.add('hidden');
+      mappingSection.classList.add('hidden');
+      setStatus('Reading workbook...', 'Working');
+      try {
+        const tzid = resolveTzid();
+        const wb = await readWorkbook(fileInput.files[0]);
+        const { sheetName, rows, note } = chooseSheetAndRows(wb);
+        setStatus(`Sheet "${sheetName}" loaded. Rows: ${rows.length}` + (note ? ` (${note})` : ''));
+
+        const map = findHeaderAndColumns(rows);
+        if (!map) {
+          _lastRows = rows;
+          showMappingUI(rows);
+          setStatus('Auto-detection failed. Please map columns below.', 'Action needed');
+          return;
+        }
+
+        const events = buildEventsFromRows(rows, map);
+        setStatus(`Parsed ${events.length} recurring series.`);
+
+        const ics = buildICS(events, tzid);
+        const csv = buildCSV(events);
+        dlIcs.href = URL.createObjectURL(new Blob([ics], {type:'text/calendar;charset=utf-8'}));
+        dlCsv.href = URL.createObjectURL(new Blob([csv], {type:'text/csv;charset=utf-8'}));
+        downloads.classList.remove('hidden');
+        setStatus('Done. You can now download ICS/CSV.', 'Ready');
+      } catch (err) {
+        console.error(err);
+        setStatus('Error: ' + (err?.message || err), 'Error');
+      }
+    });
+
+    // ===== Workbook helpers =====
+    function readWorkbook(file){
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = e => {
+          try { resolve(XLSX.read(new Uint8Array(e.target.result), { type:'array' })); }
+          catch (err) { reject(err); }
+        };
+        reader.onerror = () => reject(reader.error);
+        reader.readAsArrayBuffer(file);
+      });
+    }
+
+    // Compute a used range when ws['!ref'] is missing or collapsed (e.g., "A1")
+    function inferSheetRange(ws){
+      let minC=1e9, minR=1e9, maxC=-1, maxR=-1, found=false;
+      for (const addr in ws){
+        if (addr[0] === '!') continue;
+        if (!/^[A-Za-z]{1,3}\d+$/.test(addr)) continue;
+        const cell = XLSX.utils.decode_cell(addr);
+        found = true;
+        if (cell.c < minC) minC = cell.c;
+        if (cell.r < minR) minR = cell.r;
+        if (cell.c > maxC) maxC = cell.c;
+        if (cell.r > maxR) maxR = cell.r;
+      }
+      if (!found) return null;
+      return XLSX.utils.encode_range({ s:{c:minC,r:minR}, e:{c:maxC,r:maxR} });
+    }
+
+    function safeSheetToRows(ws){
+      let ref = ws['!ref'];
+      let inferred = false;
+      if (!ref || /^A1(?::A1)?$/i.test(ref)) {
+        const newRef = inferSheetRange(ws);
+        if (newRef) { ref = newRef; inferred = true; }
+      }
+      const rows = XLSX.utils.sheet_to_json(ws, {
+        header: 1, raw: true, range: ref || 'A1', blankrows: false, defval: ''
+      });
+      return { rows, inferred, ref: ref || 'A1' };
+    }
+
+    function chooseSheetAndRows(wb){
+      let best = { sheetName: wb.SheetNames[0], rows: [], note: '' };
+      let bestScore = -1;
+      for (const name of wb.SheetNames){
+        const ws = wb.Sheets[name];
+        const { rows, inferred } = safeSheetToRows(ws);
+        const score = scoreRowsForMeetings(rows);
+        if (score > bestScore){
+          bestScore = score;
+          best = { sheetName: name, rows, note: inferred ? 'inferred range' : '' };
+        }
+      }
+      return best;
+    }
+
+    function scoreRowsForMeetings(rows){
+      // Count cells that look like date ranges
+      let score = 0;
+      const width = Math.max(...rows.map(r => (r||[]).length), 0);
+      for (let c=0;c<width;c++){
+        for (let r=0;r<Math.min(rows.length, 300); r++){
+          if (containsDateRange(cleanStr((rows[r]||[])[c]))) score++;
+        }
+      }
+      return score;
+    }
+
+    // ===== Header detection =====
+    function normHeader(s){
+      return String(s||'').toLowerCase()
+        .replace(/\s+/g,'')
+        .replace(/[\u2013\u2014]/g,'-')
+        .replace(/[()_\-:]/g,'');
+    }
+    function looksLikeMeetingHeader(norm){
+      // “Meeting Patterns”, “Meeting Pattern(s)”, “Meeting Schedule”, “Class Meeting Info”, etc.
+      if (!(norm.includes('meeting') || norm.includes('schedule'))) return false;
+      return (norm.includes('pattern') || norm.includes('time') || norm.includes('dates') || norm.includes('schedule') || norm.includes('classmeeting'));
+    }
+
+    function guessHeaderRowIndex(rows){
+      for (let i=0;i<rows.length;i++){
+        const row = rows[i] || [];
+        const normed = row.map(normHeader);
+        if (normed.some(looksLikeMeetingHeader)) return i;
+      }
+      return -1;
+    }
+
+    function containsDateRange(cell){
+      if (!cell) return false;
+      const s = String(cell);
+      return /(\d{4}-\d{2}-\d{2})\s*[\u2013\-]\s*(\d{4}-\d{2}-\d{2})/.test(s);
+    }
+
+    function findHeaderAndColumns(rows){
+      let headerRowIdx = guessHeaderRowIndex(rows);
+      let header = headerRowIdx>=0 ? (rows[headerRowIdx]||[]).map(c=>String(c||'').trim()) : [];
+
+      // Meeting col by header or by data pattern
+      let idxMeeting = -1;
+      if (headerRowIdx >= 0){
+        const normed = header.map(normHeader);
+        idxMeeting = normed.findIndex(looksLikeMeetingHeader);
+      }
+      if (idxMeeting < 0){
+        // fall back to column with the most date-ranges under header
+        const width = Math.max(...rows.map(r => (r||[]).length), 0);
+        let bestCol=-1, bestScore=0;
+        for (let c=0;c<width;c++){
+          let score=0;
+          for (let r=(headerRowIdx>=0? headerRowIdx+1:0); r<rows.length; r++){
+            const cell = cleanStr((rows[r]||[])[c]);
+            if (containsDateRange(cell)) score++;
+          }
+          if (score>bestScore){ bestScore=score; bestCol=c; }
+        }
+        idxMeeting = bestCol;
+      }
+      if (idxMeeting == null || idxMeeting < 0) return null;
+
+      const idxCourse = indexOfHeader(header, ['Course Listing','Course'])
+        ?? guessColumn(rows, headerRowIdx, v => /\s-\s/.test(v) || /[A-Z]{2,}[ _-]?\d{2,3}/.test(v)) ?? 1;
+
+      const idxSection = indexOfHeader(header, ['Section'])
+        ?? guessColumn(rows, headerRowIdx, v => /(LEC|LAB|DIS|STU|SEM|TUT)\s*\d{2,3}/i.test(v)) ?? 6;
+
+      const idxComponent = indexOfHeader(header, ['Instructional Format','Component','Activity'])
+        ?? guessColumn(rows, headerRowIdx, v => /(lecture|discussion|laboratory|\blab\b|studio|seminar|tutorial)/i.test(v)) ?? -1;
+
+      const idxInstructor = indexOfHeader(header, ['Instructor','Teacher'])
+        ?? guessColumn(rows, headerRowIdx, v => /[A-Za-z][A-Za-z\-']+\s+[A-Za-z][A-Za-z\-']+/.test(v) && !/(registered|graded)/i.test(v)) ?? 11;
+
+      return { headerRowIdx: (headerRowIdx>=0? headerRowIdx:0), idxCourse, idxSection, idxComponent, idxMeeting, idxInstructor };
+    }
+
+    function indexOfHeader(headerRow, labels){
+      if (!headerRow) return null;
+      const normed = headerRow.map(normHeader);
+      for (const label of labels){
+        const i = normed.findIndex(h => h === normHeader(label));
+        if (i>=0) return i;
+      }
+      return null;
+    }
+
+    function guessColumn(rows, headerRowIdx, predicate){
+      const width = Math.max(...rows.map(r => (r||[]).length), 0);
+      let bestCol=-1, bestScore=0;
+      for (let c=0;c<width;c++){
+        let score=0;
+        for (let r=(headerRowIdx>=0? headerRowIdx+1:0); r<Math.min(rows.length, (headerRowIdx>=0? headerRowIdx+80:80)); r++){
+          const v = cleanStr((rows[r]||[])[c]);
+          if (predicate(v)) score++;
+        }
+        if (score>bestScore){ bestScore=score; bestCol=c; }
+      }
+      return (bestCol>=0? bestCol : null);
+    }
+
+    // ===== Meeting pattern parsing =====
+    const DAY_MAP = new Map([
+      ['Mon','MO'], ['Tue','TU'], ['Tues','TU'], ['Wed','WE'], ['Thu','TH'], ['Thur','TH'], ['Fri','FR'], ['Sat','SA'], ['Sun','SU'],
+      ['M','MO'], ['T','TU'], ['W','WE'], ['R','TH'], ['Th','TH'], ['F','FR'], ['S','SA'], ['Su','SU']
+    ]);
+
+    function parseMeetingSegments(str){
+      const tokens = String(str).split('|').map(s=>s.trim());
+      const dateRe = /^(\d{4}-\d{2}-\d{2})\s*[\u2013\-]\s*(\d{4}-\d{2}-\d{2})$/;
+      const segIdx = tokens.map((t,i)=>dateRe.test(t)? i : -1).filter(i=>i>=0);
+      const segments = [];
+      for (let k=0;k<segIdx.length;k++){
+        const start = segIdx[k];
+        const end = (k+1<segIdx.length? segIdx[k+1] : tokens.length);
+        const chunk = tokens.slice(start, end);
+        const m = chunk[0].match(dateRe);
+        const startDate = ymdToUTCDate(m[1]);
+        const endDate = ymdToUTCDate(m[2]);
+
+        const days = chunk[1] || '';
+        const bydays = days.split(/[\s,\/]+/).map(tok=>DAY_MAP.get(tok)||DAY_MAP.get(cap(tok))||null).filter(Boolean);
+
+        const times = chunk[2] || '';
+        theTm = times.match(/([0-9:.\sapmAPM]+)\s*[\u2013\-]\s*([0-9:.\sapmAPM]+)/);
+        let startTime=null, endTime=null;
+        if (theTm){ startTime = parseTime(theTm[1]); endTime = parseTime(theTm[2]); }
+
+        let campus=null, building=null, floor=null, room=null;
+        for (const tok of chunk.slice(3)){
+          const low = tok.toLowerCase();
+          if (['ubcv','ubco','ubc vancouver','ubc okanagan'].includes(low)) campus = tok;
+          else if (low.startsWith('floor')) floor = tok;
+          else if (low.startsWith('room')) room = tok.replace(/^\s*room:\s*/i, '');
+          else if (tok.includes('(') && tok.includes(')')) building = tok;
+          else if (!building && tok) building = tok;
+        }
+        segments.push({ startDate, endDate, bydays, startTime, endTime, campus, building, floor, room });
+      }
+      return segments;
+    }
+
+    // parse both 12h (“1:00 p.m.” / “1 PM”) and 24h (“13:00”) times
+    function parseTime(tstr){
+      const t = String(tstr).replace(/\./g,'').trim().toUpperCase();
+      let m = t.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i);
+      if (m){ let h = parseInt(m[1],10), min = parseInt(m[2]||'0',10); const ap=m[3].toUpperCase(); if (ap==='PM' && h!==12) h+=12; if (ap==='AM' && h===12) h=0; return {h, m:min}; }
+      m = t.match(/^(\d{1,2})(?::(\d{2}))$/); if (m){ return {h:parseInt(m[1],10), m:parseInt(m[2]||'0',10)}; }
+      m = t.match(/^(\d{1,2})$/); if (m){ return {h:parseInt(m[1],10), m:0}; }
+      return null;
+    }
+
+    // ===== Date range helpers =====
+    function clampToTerms(segStart, segEnd){
+      const out = [];
+      let s = maxDate(segStart, TERM1_START), e = minDate(segEnd, TERM1_END); if (s <= e) out.push({ start:s, end:e });
+      s = maxDate(segStart, TERM2_START), e = minDate(segEnd, TERM2_END); if (s <= e) out.push({ start:s, end:e });
+      if (out.length === 0) out.push({ start: segStart, end: segEnd }); // other schools/terms → keep range
+      return out;
+    }
+    function maxDate(a,b){ return (a.getTime()>b.getTime()? a : b); }
+    function minDate(a,b){ return (a.getTime()<b.getTime()? a : b); }
+    function nextWeekdayOnOrAfter(dUtc, bydays){
+      const want = new Set(bydays.map(code=> ({MO:1,TU:2,WE:3,TH:4,FR:5,SA:6,SU:0}[code]) ));
+      for (let k=0;k<7;k++){
+        const cand = new Date(dUtc.getTime()); cand.setUTCDate(cand.getUTCDate()+k);
+        if (want.has(cand.getUTCDay())) return cand;
+      }
+      return dUtc;
+    }
+    function lastOccurrenceDate(endUtc, bydays){
+      const want = new Set(bydays.map(code=> ({MO:1,TU:2,WE:3,TH:4,FR:5,SA:6,SU:0}[code]) ));
+      for (let k=0;k<7;k++){
+        const cand = new Date(endUtc.getTime()); cand.setUTCDate(cand.getUTCDate()-k);
+        if (want.has(cand.getUTCDay())) return cand;
+      }
+      return endUtc;
+    }
+
+    // ===== Build events from rows =====
+    function buildEventsFromRows(rows, map){
+      const { headerRowIdx, idxCourse, idxSection, idxComponent, idxMeeting, idxInstructor } = map;
+      const events = [];
+      for (let r = headerRowIdx + 1; r < rows.length; r++){
+        const row = rows[r] || [];
+        const meeting = cleanStr(row[idxMeeting]);
+        if (!containsDateRange(meeting)) continue;
+
+        const course = cleanStr(row[idxCourse]) || '';
+        const section = cleanStr(row[idxSection]) || '';
+        const component = normalizeComponent(cleanStr(row[idxComponent]) || '');
+        const instructor = normalizeInstructor(cleanStr(row[idxInstructor]) || '');
+
+        const segments = parseMeetingSegments(meeting);
+        for (const seg of segments){
+          for (const { start, end } of clampToTerms(seg.startDate, seg.endDate)){
+            if (!seg.bydays?.length || !seg.startTime || !seg.endTime) continue;
+            const title = section ? `${course} — ${section}` : course;
+            const location = [seg.building, seg.floor, seg.room ? `Room ${seg.room}` : '', seg.campus].filter(Boolean).join(' | ');
+            events.push({ title, component, instructor, location, bydays: seg.bydays, startDate: start, endDate: end, startTime: seg.startTime, endTime: seg.endTime });
+          }
+        }
+      }
+      return events;
+    }
+
+    function normalizeComponent(v){
+      const s = (v||'').toLowerCase();
+      if (/laboratory|\blab\b/.test(s)) return 'Laboratory';
+      if (/discussion/.test(s)) return 'Discussion';
+      if (/lecture/.test(s)) return 'Lecture';
+      if (/studio/.test(s)) return 'Studio';
+      if (/seminar/.test(s)) return 'Seminar';
+      if (/tutorial/.test(s)) return 'Tutorial';
+      return v || '';
+    }
+    function normalizeInstructor(v){
+      if (!v) return '';
+      return v.split(/\r?\n+/).map(s=>s.trim()).filter(Boolean).join(' / ');
+    }
+
+    // ===== ICS / CSV builders (DST-aware via TZID; RRULE with COUNT) =====
+    function resolveTzid(){ const v = tzSelect.value; return v==='__custom__' ? (tzCustom.value.trim() || 'America/Vancouver') : v; }
+    function fmtICSLocal(dt){ const d = dt.dateUtc; const h = pad(dt.time.h), m = pad(dt.time.m); return `${d.getUTCFullYear()}${pad(d.getUTCMonth()+1)}${pad(d.getUTCDate())}T${h}${m}00`; }
+    function escapeText(s){ return String(s||'').replace(/\\/g,'\\\\').replace(/\n/g,'\\n').replace(/;/g,'\\;').replace(/,/g,'\\,'); }
+    function countOccurrences(firstUtc, endUtc, bydays){
+      const want = new Set(bydays.map(code=> ({MO:1,TU:2,WE:3,TH:4,FR:5,SA:6,SU:0}[code]) ));
+      let count=0; for (let d=new Date(firstUtc.getTime()); d<=endUtc; d.setUTCDate(d.getUTCDate()+1)){ if (want.has(d.getUTCDay())) count++; }
+      return count;
+    }
+
+    function buildICS(events, tzid){
+      const lines = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Schedule Converter//EN','CALSCALE:GREGORIAN','METHOD:PUBLISH'];
+      for (const e of events){
+        const first = nextWeekdayOnOrAfter(e.startDate, e.bydays);
+        const last = lastOccurrenceDate(e.endDate, e.bydays);
+        const cnt = countOccurrences(first, last, e.bydays);
+        if (cnt<=0) continue;
+
+        const dtstart = { dateUtc:first, time:e.startTime };
+        const dtend   = { dateUtc:first, time:e.endTime };
+        const byday = e.bydays.join(',');
+        const desc = [ e.component? `Component: ${e.component}`: '', e.instructor? `Instructor: ${e.instructor}`: '' ].filter(Boolean).join('\\n');
+
+        lines.push('BEGIN:VEVENT');
+        lines.push(`UID:${crypto.randomUUID()}`);
+        lines.push(`SUMMARY:${escapeText(e.title)}`);
+        lines.push(`DTSTART;TZID=${tzid}:${fmtICSLocal(dtstart)}`);
+        lines.push(`DTEND;TZID=${tzid}:${fmtICSLocal(dtend)}`);
+        lines.push(`RRULE:FREQ=WEEKLY;BYDAY=${byday};COUNT=${cnt}`);
+        lines.push(`LOCATION:${escapeText(e.location||'')}`);
+        lines.push(`DESCRIPTION:${escapeText(desc)}`);
+        lines.push('END:VEVENT');
+      }
+      lines.push('END:VCALENDAR');
+      return lines.join('\n');
+    }
+
+    function mmddyyyy(d){ return `${pad(d.getUTCMonth()+1)}/${pad(d.getUTCDate())}/${d.getUTCFullYear()}`; }
+    function hm12(d){ let h=d.getUTCHours(); const m=pad(d.getUTCMinutes()); const ap=h>=12? 'PM':'AM'; h=h%12; if (h===0) h=12; return `${h}:${m} ${ap}`; }
+    function csvEscape(v){ const s = String(v==null? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; }
+
+    function buildCSV(events){
+      const headers = ['Subject','Start Date','Start Time','End Date','End Time','All Day Event','Description','Location','Private'];
+      const rows = [headers];
+      for (const e of events){
+        const first = nextWeekdayOnOrAfter(e.startDate, e.bydays);
+        const byset = new Set(e.bydays.map(code=> ({MO:1,TU:2,WE:3,TH:4,FR:5,SA:6,SU:0}[code]) ));
+        for (let d=new Date(first.getTime()); d<=e.endDate; d.setUTCDate(d.getUTCDate()+1)){
+          if (!byset.has(d.getUTCDay())) continue;
+          const s = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), e.startTime.h, e.startTime.m, 0));
+          const eend = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), e.endTime.h, e.endTime.m, 0));
+          const desc = [ e.component? `Component: ${e.component}`: '', e.instructor? `Instructor: ${e.instructor}`: '' ].filter(Boolean).join('\n');
+          rows.push([ e.title, mmddyyyy(s), hm12(s), mmddyyyy(eend), hm12(eend), 'False', desc, e.location||'', 'True' ]);
+        }
+      }
+      return rows.map(r=>r.map(csvEscape).join(',')).join('\n');
+    }
+
+    // ===== Mapping UI =====
+    function showMappingUI(rows){
+      const headerRowIdx = guessHeaderRowIndex(rows);
+      const header = headerRowIdx>=0 ? (rows[headerRowIdx]||[]) : [];
+      const firstData = rows[Math.max(headerRowIdx+1, 0)] || [];
+      const width = Math.max(...rows.map(r => (r||[]).length), 0);
+
+      const optionHtml = (i) => {
+        const head = cleanStr(header[i] || `Column ${i+1}`);
+        const sample = cleanStr(firstData[i] || '');
+        return `<option value="${i}">${head}${sample? ' — '+sample.slice(0,60): ''}</option>`;
+      };
+      const opts = Array.from({length: width}, (_,i)=>optionHtml(i)).join('');
+      mapMeeting.innerHTML = opts; mapCourse.innerHTML = opts; mapSection.innerHTML = opts; mapComponent.innerHTML = opts; mapInstructor.innerHTML = opts;
+      mappingSection.classList.remove('hidden');
+    }
+
+    mappingApply.addEventListener('click', () => {
+      if (!_lastRows) return;
+      const map = {
+        headerRowIdx: Math.max(guessHeaderRowIndex(_lastRows), 0),
+        idxMeeting: Number(mapMeeting.value),
+        idxCourse: Number(mapCourse.value),
+        idxSection: Number(mapSection.value),
+        idxComponent: Number(mapComponent.value),
+        idxInstructor: Number(mapInstructor.value)
+      };
+      mappingSection.classList.add('hidden');
+      try {
+        const tzid = resolveTzid();
+        const events = buildEventsFromRows(_lastRows, map);
+        setStatus(`Parsed ${events.length} recurring series (mapped).`);
+        const ics = buildICS(events, tzid);
+        const csv = buildCSV(events);
+        dlIcs.href = URL.createObjectURL(new Blob([ics], {type:'text/calendar;charset=utf-8'}));
+        dlCsv.href = URL.createObjectURL(new Blob([csv], {type:'text/csv;charset=utf-8'}));
+        downloads.classList.remove('hidden');
+        setStatus('Done. You can now download ICS/CSV.', 'Ready');
+      } catch (err) { console.error(err); setStatus('Error (mapping): ' + (err?.message||err), 'Error'); }
+    });
+    mappingCancel.addEventListener('click', () => { mappingSection.classList.add('hidden'); setStatus('Mapping cancelled.', 'Idle'); });
+
+    // ===== Dev tests =====
+    runTestsBtn?.addEventListener('click', () => {
+      logEl.textContent = ''; setStatus('Running self-tests...', 'Testing');
+      try {
+        // 12h / 24h time parsing
+        let t = parseTime('1:00 p.m.'); if (!(t.h===13 && t.m===0)) throw new Error('12h parse A');
+        t = parseTime('12:00 AM'); if (!(t.h===0 && t.m===0)) throw new Error('12h parse B');
+        t = parseTime('9 AM'); if (!(t.h===9 && t.m===0)) throw new Error('12h parse C');
+        t = parseTime('13:45'); if (!(t.h===13 && t.m===45)) throw new Error('24h parse A');
+        t = parseTime('8'); if (!(t.h===8 && t.m===0)) throw new Error('24h hour only');
+
+        // Meeting segments: hyphen & en-dash, two segments
+        const mp = '2026-01-05 - 2026-02-13 | Mon Wed Fri | 1:00 p.m. - 2:00 p.m. | UBCV | Hebb Building (HEBB) | Floor: 1 | Room: 100 | 2026-02-23 – 2026-04-10 | Mon Wed Fri | 13:00 - 14:00 | UBCV | Hebb Building (HEBB) | Floor: 1 | Room: 100';
+        const segs = parseMeetingSegments(mp); if (segs.length !== 2) throw new Error('Segments count');
+        if (!(segs[0].bydays.length===3 && segs[0].startTime.h===13 && segs[0].room==='100')) throw new Error('Seg 1 parse');
+
+        // Header detection (synonym variants)
+        const rows1 = [ ['Course Listing','Meeting Pattern(s)','Instructor'], ['PHYS_V 157 - Intro','2025-09-02 - 2025-12-05 | Mon | 1:00 p.m. - 2:00 p.m.','Jane Doe'] ];
+        const map1 = findHeaderAndColumns(rows1); if (!map1 || map1.idxMeeting==null || map1.idxMeeting<0) throw new Error('Header synonym fail');
+
+        // Header detection (Class Meeting Info)
+        const rows1b = [ ['Course','Class Meeting Info','Instructor'], ['MATH 100','2025-09-02 – 2025-12-05 | Tue Thu | 10:00 - 11:30 | UBCV | HENN | Room: 200','Dr X'] ];
+        const map1b = findHeaderAndColumns(rows1b); if (!map1b || map1b.idxMeeting==null || map1b.idxMeeting<0) throw new Error('Header synonym 2 fail');
+
+        // No header: data fallback
+        const rows2 = [ ['Banner','',''], ['Something Else','',''], ['PHYS_V 157 - Intro','','','','','','Lecture','','','','2025-09-02 - 2025-12-05 | Mon Wed | 1:00 p.m. - 2:00 p.m.','','','',''] ];
+        const map2 = findHeaderAndColumns(rows2); if (!map2 || map2.idxMeeting==null || map2.idxMeeting<0) throw new Error('Data fallback fail');
+
+        // Collapsed !ref → inferred range test
+        const wsMock = { '!ref':'A1', 'B2':{v:'Course'}, 'C3':{v:'2025-09-02 - 2025-12-05 | Mon | 1:00 p.m. - 2:00 p.m.'} };
+        const inferred = inferSheetRange(wsMock);
+        if (!inferred || inferred === 'A1' || inferred === 'A1:A1') throw new Error('Infer range failed');
+
+        // ICS smoke (TZID + COUNT)
+        const events = [{ title:'PHYS 157 — LEC 101', component:'Lecture', instructor:'S. Bagheri', location:'Hebb (HEBB) | Floor: 1 | Room 100 | UBCV', bydays:['MO','WE','FR'], startDate: ymdToUTCDate('2025-09-02'), endDate: ymdToUTCDate('2025-12-05'), startTime:{h:13,m:0}, endTime:{h:14,m:0} }];
+        const ics = buildICS(events, 'America/Vancouver');
+        if (!/BEGIN:VCALENDAR/.test(ics) || !/RRULE:/.test(ics) || !/DTSTART;TZID=America\/Vancouver/.test(ics) || !/COUNT=/.test(ics)) throw new Error('ICS build fail');
+
+        setStatus('All tests passed ✅', 'OK');
+      } catch (e) { setStatus('Test failure: ' + e.message, 'Error'); }
+    });
+
+    // Demo button
+    demoBtn?.addEventListener('click', () => {
+      logEl.textContent = ''; setStatus('Using demo rows (no file)...', 'Demo');
+      const rows = [
+        ['Course Listing','Drop','Swap','Section','Status','Grading','Instructional Format','Campus','Building','Room','Meeting Patterns','Instructor','Start Date','End Date','Other'],
+        ['PHYS_V 157 - Introductory Physics for Engineers I','','','LEC 101','Registered','Graded','Lecture','','','','2025-09-02 - 2025-12-05 | Mon Wed Fri | 1:00 p.m. - 2:00 p.m. | UBCV | Hebb Building (HEBB) | Floor: 1 | Room: 100','Simin Bagheri Najmi','','',''],
+        ['PHYS_V 157 - Introductory Physics for Engineers I','','','DIS 202','Registered','Graded','Discussion','','','','2025-09-05 – 2025-12-05 | Fri | 14:00 - 15:00 | UBCV | Hebb Building (HEBB) | Floor: 3 | Room: 314','Simin Bagheri Najmi','','','']
+      ];
+      const map = findHeaderAndColumns(rows);
+      const events = buildEventsFromRows(rows, map);
+      setStatus(`Parsed ${events.length} recurring series from demo.`);
+      const ics = buildICS(events, resolveTzid());
+      const csv = buildCSV(events);
+      dlIcs.href = URL.createObjectURL(new Blob([ics], {type:'text/calendar;charset=utf-8'}));
+      dlCsv.href = URL.createObjectURL(new Blob([csv], {type:'text/csv;charset=utf-8'}));
+      downloads.classList.remove('hidden');
+      setStatus('Demo build complete. Download links ready.', 'Ready');
+    });
+  </script>
+</body>
+</html>
