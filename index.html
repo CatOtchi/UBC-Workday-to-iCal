@@ -4,14 +4,14 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Schedule Converter → Google Calendar (ICS/CSV)</title>
-  <!-- Tailwind (CDN) -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <!-- SheetJS (Excel parser) -->
+  <!-- ✅ Load the built Tailwind CSS (from the GitHub Actions build) -->
+  <link rel="stylesheet" href="assets/tailwind.css" />
+  <!-- (keep your other scripts) -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <!-- (keep your custom styles AFTER Tailwind so they can override it) -->
   <style>
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-    .log { white-space: pre-wrap; }
-    .hidden { display: none; }
+    /* ...the rest of your custom CSS... */
   </style>
 </head>
 <body class="bg-gradient-to-b from-gray-50 to-white min-h-screen text-gray-900">
