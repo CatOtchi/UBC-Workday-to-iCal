@@ -19,21 +19,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      # Build Tailwind CSS (no local install needed)
+      - name: Sanity check required files
+        run: |
+          test -f index.html || (echo "::error::index.html missing" && exit 1)
+          test -f tailwind.config.js || (echo "::error::tailwind.config.js missing" && exit 1)
+          test -f src/input.css || (echo "::error::src/input.css missing" && exit 1)
+
+      # ✅ npx with -- separator; no --content
       - name: Build Tailwind CSS
         run: |
           mkdir -p assets
-          npx --yes tailwindcss -i ./src/input.css -o ./assets/tailwind.css --minify --content ./index.html
+          npx --yes tailwindcss@latest -- -i ./src/input.css -o ./assets/tailwind.css --minify
 
-      - name: Prepare dist
+      - name: Prepare dist for Pages
         run: |
           mkdir -p dist/assets
           cp index.html dist/
-          cp assets/tailwind.css dist/assets/
+          cp -r assets/* dist/assets/
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
