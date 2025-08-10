@@ -278,7 +278,7 @@
       let bestScore = -1;
       for (const name of wb.SheetNames){
         const ws = wb.Sheets[name];
-        const { rows, inferred } = safeSheetToRows(ws);
+        const { rows, inferred, ref } = safeSheetToRows(ws);
         const score = scoreRowsForMeetings(rows);
         if (score > bestScore){
           bestScore = score;
@@ -416,9 +416,9 @@
         const bydays = days.split(/[\s,\/]+/).map(tok=>DAY_MAP.get(tok)||DAY_MAP.get(cap(tok))||null).filter(Boolean);
 
         const times = chunk[2] || '';
-        theTm = times.match(/([0-9:.\sapmAPM]+)\s*[\u2013\-]\s*([0-9:.\sapmAPM]+)/);
+        const tm = times.match(/([0-9:.\sapmAPM]+)\s*[\u2013\-]\s*([0-9:.\sapmAPM]+)/);
         let startTime=null, endTime=null;
-        if (theTm){ startTime = parseTime(theTm[1]); endTime = parseTime(theTm[2]); }
+        if (tm){ startTime = parseTime(tm[1]); endTime = parseTime(tm[2]); }
 
         let campus=null, building=null, floor=null, room=null;
         for (const tok of chunk.slice(3)){
@@ -641,7 +641,7 @@
         const rows2 = [ ['Banner','',''], ['Something Else','',''], ['PHYS_V 157 - Intro','','','','','','Lecture','','','','2025-09-02 - 2025-12-05 | Mon Wed | 1:00 p.m. - 2:00 p.m.','','','',''] ];
         const map2 = findHeaderAndColumns(rows2); if (!map2 || map2.idxMeeting==null || map2.idxMeeting<0) throw new Error('Data fallback fail');
 
-        // Collapsed !ref → inferred range test
+        // NEW: Collapsed !ref → inferred range test
         const wsMock = { '!ref':'A1', 'B2':{v:'Course'}, 'C3':{v:'2025-09-02 - 2025-12-05 | Mon | 1:00 p.m. - 2:00 p.m.'} };
         const inferred = inferSheetRange(wsMock);
         if (!inferred || inferred === 'A1' || inferred === 'A1:A1') throw new Error('Infer range failed');
