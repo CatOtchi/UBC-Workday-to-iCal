@@ -11,14 +11,15 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages"
+  group: pages
   cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -31,12 +32,12 @@ jobs:
           test -f tailwind.config.js || (echo "::error::tailwind.config.js missing" && exit 1)
           test -f src/input.css || (echo "::error::src/input.css missing" && exit 1)
 
+      # Build Tailwind (works with npm 10's npx)
       - name: Build Tailwind CSS
-  run: |
-    mkdir -p assets
-    # Preinstall the package for this one command, then run its binary
-    npx --yes -p tailwindcss@3.4.10 tailwindcss -i ./src/input.css -o ./assets/tailwind.css --minify
-    test -s assets/tailwind.css || (echo "::error::Tailwind build produced empty CSS" && exit 1)
+        run: |
+          mkdir -p assets
+          npx -y -p tailwindcss@3.4.10 tailwindcss -i ./src/input.css -o ./assets/tailwind.css --minify
+          test -s assets/tailwind.css || (echo "::error::Tailwind build produced empty CSS" && exit 1)
 
       - name: Prepare dist for Pages
         run: |
@@ -53,11 +54,11 @@ jobs:
           path: dist
 
   deploy:
+    runs-on: ubuntu-latest
+    needs: build
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
