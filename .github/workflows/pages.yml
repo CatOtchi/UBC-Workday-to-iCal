@@ -31,11 +31,12 @@ jobs:
           test -f tailwind.config.js || (echo "::error::tailwind.config.js missing" && exit 1)
           test -f src/input.css || (echo "::error::src/input.css missing" && exit 1)
 
-      # ✅ npx with -- separator; no --content
       - name: Build Tailwind CSS
-        run: |
-          mkdir -p assets
-          npx --yes tailwindcss@latest -- -i ./src/input.css -o ./assets/tailwind.css --minify
+  run: |
+    mkdir -p assets
+    # Preinstall the package for this one command, then run its binary
+    npx --yes -p tailwindcss@3.4.10 tailwindcss -i ./src/input.css -o ./assets/tailwind.css --minify
+    test -s assets/tailwind.css || (echo "::error::Tailwind build produced empty CSS" && exit 1)
 
       - name: Prepare dist for Pages
         run: |
