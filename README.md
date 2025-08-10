@@ -1,3 +1,4 @@
 # UBC-Workday-to-iCal
 Convert UBC Workday Excel schedules to iCal for importing into Google/Apple/Outlook calander
-/n (Mostly Vibe coded)
+
+*(Mostly Vibe coded)*
